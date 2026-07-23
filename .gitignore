@@ -5,8 +5,8 @@ yarn-error.log
 
 # Build outputs
 tracker/dist/
-dashboard/build/
-dashboard/dist/
+frontend/build/
+frontend/dist/
 
 # Environment
 .env
