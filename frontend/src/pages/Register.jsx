@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api/client';
-import { useAuth } from '../context/AuthContext';
-import { LogIn } from 'lucide-react';
+import { UserPlus } from 'lucide-react';
 import { GoogleLogin } from '@react-oauth/google';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 
-export default function Login() {
+export default function Register() {
+    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
@@ -18,16 +19,11 @@ export default function Login() {
         e.preventDefault();
         setLoading(true);
         try {
-            const response = await api.post('/auth/login', { email, password });
-            login(response.data.user);
-            toast.success('Successfully logged in!');
-            if (!response.data.user.isEmailVerified) {
-                navigate('/verify-email');
-            } else {
-                navigate('/');
-            }
+            await api.post('/auth/register', { name, email, password });
+            toast.success('Account created! Please verify your email.');
+            navigate('/verify-email', { state: { email } });
         } catch (err) {
-            toast.error(err.message || 'Login failed');
+            toast.error(err.message || 'Registration failed');
         } finally {
             setLoading(false);
         }
@@ -38,10 +34,10 @@ export default function Login() {
             setLoading(true);
             const response = await api.post('/auth/google', { idToken: credentialResponse.credential });
             login(response.data.user);
-            toast.success('Successfully logged in with Google!');
+            toast.success('Successfully registered and logged in!');
             navigate('/');
         } catch (err) {
-            toast.error(err.message || 'Google login failed');
+            toast.error(err.message || 'Google registration failed');
         } finally {
             setLoading(false);
         }
@@ -51,11 +47,23 @@ export default function Login() {
         <div className="min-h-screen flex-center">
             <div className="glass-card" style={{ width: '100%', maxWidth: '400px' }}>
                 <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-                    <h2>Welcome Back</h2>
-                    <p>Log in to Unsaid Dashboard</p>
+                    <h2>Create Account</h2>
+                    <p>Start tracking UI friction automatically</p>
                 </div>
                 
                 <form onSubmit={handleSubmit}>
+                    <div className="form-group">
+                        <label>Full Name</label>
+                        <input 
+                            type="text" 
+                            className="input-field" 
+                            value={name}
+                            onChange={e => setName(e.target.value)}
+                            required
+                            placeholder="Jane Doe"
+                        />
+                    </div>
+
                     <div className="form-group">
                         <label>Email</label>
                         <input 
@@ -79,14 +87,10 @@ export default function Login() {
                             placeholder="••••••••"
                         />
                     </div>
-                    
-                    <div style={{ textAlign: 'right', marginBottom: '1rem' }}>
-                        <Link to="/forgot-password" style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textDecoration: 'none' }}>Forgot Password?</Link>
-                    </div>
 
-                    <button type="submit" className="btn" style={{ width: '100%', marginTop: '0.5rem' }} disabled={loading}>
-                        <LogIn size={18} />
-                        {loading ? 'Authenticating...' : 'Sign In'}
+                    <button type="submit" className="btn" style={{ width: '100%', marginTop: '1rem' }} disabled={loading}>
+                        <UserPlus size={18} />
+                        {loading ? 'Creating Account...' : 'Register'}
                     </button>
                 </form>
                 
@@ -99,14 +103,14 @@ export default function Login() {
                 <div style={{ display: 'flex', justifyContent: 'center' }}>
                     <GoogleLogin
                         onSuccess={handleGoogleSuccess}
-                        onError={() => toast.error('Google login failed')}
+                        onError={() => toast.error('Google registration failed')}
                         useOneTap
                         theme="filled_black"
                     />
                 </div>
 
                 <div style={{ marginTop: '2rem', textAlign: 'center', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                    Don't have an account? <Link to="/register" style={{ color: 'var(--accent-primary)', textDecoration: 'none' }}>Register here</Link>
+                    Already have an account? <Link to="/login" style={{ color: 'var(--accent-primary)', textDecoration: 'none' }}>Sign In</Link>
                 </div>
             </div>
         </div>
