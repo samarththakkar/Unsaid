@@ -2,6 +2,8 @@ const { asyncHandler } = require("../utils/asyncHandler");
 const { ApiError } = require("../utils/ApiError");
 const { ApiResponse } = require("../utils/ApiResponse");
 const User = require("../models/User");
+const { generateOtp } = require("../utils/generateOtp");
+const { sendEmail } = require("../utils/sendEmail");
 
 const generateAccessAndRefreshTokens = async (userId) => {
     try {
@@ -30,19 +32,104 @@ const registerUser = asyncHandler(async (req, res) => {
         throw new ApiError(409, "User with this email already exists");
     }
 
+    const otp = generateOtp();
+    const otpExpiryMinutes = parseInt(process.env.OTP_EXPIRY_MINUTES) || 15;
+    const otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+
     const user = await User.create({
         name,
         email,
         password,
+        otp,
+        otpExpiry,
     });
 
-    const createdUser = await User.findById(user._id).select("-password -refreshToken");
+    const createdUser = await User.findById(user._id).select("-password -refreshToken -otp");
 
     if (!createdUser) {
         throw new ApiError(500, "Something went wrong while registering the user");
     }
 
-    return res.status(201).json(new ApiResponse(201, createdUser, "User registered successfully"));
+    const message = `Your email verification code is: ${otp}. It will expire in ${otpExpiryMinutes} minutes.`;
+    await sendEmail({
+        email: user.email,
+        subject: "Verify your email",
+        message,
+    });
+
+    return res.status(201).json(
+        new ApiResponse(
+            201, 
+            createdUser, 
+            "User registered successfully. Please check your email for the verification code."
+        )
+    );
+});
+
+const verifyEmail = asyncHandler(async (req, res) => {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+        throw new ApiError(400, "Email and OTP are required");
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    if (user.isEmailVerified) {
+        return res.status(200).json(new ApiResponse(200, null, "Email is already verified"));
+    }
+
+    if (user.otp !== otp) {
+        throw new ApiError(400, "Invalid OTP");
+    }
+
+    if (user.otpExpiry < Date.now()) {
+        throw new ApiError(400, "OTP has expired");
+    }
+
+    user.isEmailVerified = true;
+    user.otp = undefined;
+    user.otpExpiry = undefined;
+    await user.save({ validateBeforeSave: false });
+
+    return res.status(200).json(new ApiResponse(200, null, "Email verified successfully"));
+});
+
+const resendVerificationEmail = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        throw new ApiError(400, "Email is required");
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    if (user.isEmailVerified) {
+        return res.status(200).json(new ApiResponse(200, null, "Email is already verified"));
+    }
+
+    const otp = generateOtp();
+    const otpExpiryMinutes = parseInt(process.env.OTP_EXPIRY_MINUTES) || 15;
+    user.otp = otp;
+    user.otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+
+    const message = `Your new email verification code is: ${otp}. It will expire in ${otpExpiryMinutes} minutes.`;
+    await sendEmail({
+        email: user.email,
+        subject: "Verify your email",
+        message,
+    });
+
+    return res.status(200).json(new ApiResponse(200, null, "Verification email resent successfully"));
 });
 
 const loginUser = asyncHandler(async (req, res) => {
@@ -58,6 +145,10 @@ const loginUser = asyncHandler(async (req, res) => {
         throw new ApiError(404, "User does not exist");
     }
 
+    if (!user.isEmailVerified) {
+        throw new ApiError(403, "Please verify your email before logging in");
+    }
+
     const isPasswordValid = await user.isPasswordCorrect(password);
 
     if (!isPasswordValid) {
@@ -66,7 +157,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
     const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
 
-    const loggedInUser = await User.findById(user._id).select("-password -refreshToken");
+    const loggedInUser = await User.findById(user._id).select("-password -refreshToken -otp -otpExpiry");
 
     const options = {
         httpOnly: true,
@@ -95,7 +186,7 @@ const logoutUser = asyncHandler(async (req, res) => {
         req.user._id,
         {
             $unset: {
-                refreshToken: 1, // remove the field from document
+                refreshToken: 1,
             },
         },
         {
@@ -115,8 +206,69 @@ const logoutUser = asyncHandler(async (req, res) => {
         .json(new ApiResponse(200, {}, "User logged out successfully"));
 });
 
+const forgotPassword = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        throw new ApiError(400, "Email is required");
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    const otp = generateOtp();
+    const otpExpiryMinutes = parseInt(process.env.OTP_EXPIRY_MINUTES) || 15;
+    user.otp = otp;
+    user.otpExpiry = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+
+    const message = `Your password reset code is: ${otp}. It will expire in ${otpExpiryMinutes} minutes.`;
+    await sendEmail({
+        email: user.email,
+        subject: "Reset your password",
+        message,
+    });
+
+    return res.status(200).json(new ApiResponse(200, null, "Password reset code sent to your email"));
+});
+
+const resetPassword = asyncHandler(async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+
+    if (!email || !otp || !newPassword) {
+        throw new ApiError(400, "Email, OTP, and new password are required");
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    if (user.otp !== otp) {
+        throw new ApiError(400, "Invalid OTP");
+    }
+
+    if (user.otpExpiry < Date.now()) {
+        throw new ApiError(400, "OTP has expired");
+    }
+
+    user.password = newPassword;
+    user.otp = undefined;
+    user.otpExpiry = undefined;
+    // this will trigger the pre-save hook to hash the new password
+    await user.save();
+
+    return res.status(200).json(new ApiResponse(200, null, "Password reset successfully"));
+});
+
 module.exports = {
     registerUser,
+    verifyEmail,
+    resendVerificationEmail,
     loginUser,
     logoutUser,
+    forgotPassword,
+    resetPassword,
 };
