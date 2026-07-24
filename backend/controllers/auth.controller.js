@@ -4,6 +4,9 @@ const { ApiResponse } = require("../utils/ApiResponse");
 const User = require("../models/User");
 const { generateOtp } = require("../utils/generateOtp");
 const { sendEmail } = require("../utils/sendEmail");
+const { OAuth2Client } = require("google-auth-library");
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const generateAccessAndRefreshTokens = async (userId) => {
     try {
@@ -263,6 +266,73 @@ const resetPassword = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, null, "Password reset successfully"));
 });
 
+const googleLogin = asyncHandler(async (req, res) => {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+        throw new ApiError(400, "Google ID Token is required");
+    }
+
+    try {
+        const ticket = await client.verifyIdToken({
+            idToken,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+
+        const payload = ticket.getPayload();
+        const { email, name, sub: googleId } = payload;
+
+        let user = await User.findOne({ email });
+
+        if (!user) {
+            // Register new user
+            user = await User.create({
+                name,
+                email,
+                authProvider: "google",
+                googleId,
+                isEmailVerified: true, // Google already verified their email
+            });
+        } else {
+            // User exists. Update googleId if not present (account linking)
+            if (user.authProvider === "local" && !user.googleId) {
+                user.googleId = googleId;
+                // If they hadn't verified their email locally yet, do it now
+                user.isEmailVerified = true;
+                await user.save({ validateBeforeSave: false });
+            }
+        }
+
+        const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(user._id);
+
+        const loggedInUser = await User.findById(user._id).select("-password -refreshToken -otp -otpExpiry");
+
+        const options = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+        };
+
+        return res
+            .status(200)
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
+            .json(
+                new ApiResponse(
+                    200,
+                    {
+                        user: loggedInUser,
+                        accessToken,
+                        refreshToken,
+                    },
+                    "Google Login successful"
+                )
+            );
+    } catch (error) {
+        console.error("Google Auth Error:", error);
+        throw new ApiError(401, "Invalid Google ID Token");
+    }
+});
+
 module.exports = {
     registerUser,
     verifyEmail,
@@ -271,4 +341,5 @@ module.exports = {
     logoutUser,
     forgotPassword,
     resetPassword,
+    googleLogin,
 };

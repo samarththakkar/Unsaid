@@ -6,7 +6,8 @@ const {
     loginUser, 
     logoutUser,
     forgotPassword,
-    resetPassword
+    resetPassword,
+    googleLogin
 } = require("../controllers/auth.controller");
 const { verifyJWT } = require("../middleware/authUser");
 
@@ -14,6 +15,7 @@ const router = express.Router();
 
 // Authentication & Verification
 router.route("/register").post(registerUser);
+router.route("/google").post(googleLogin);
 router.route("/verify-email").post(verifyEmail);
 router.route("/resend-verification").post(resendVerificationEmail);
 router.route("/login").post(loginUser);
