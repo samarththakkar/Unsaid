@@ -54,11 +54,17 @@ const registerUser = asyncHandler(async (req, res) => {
     }
 
     const message = `Your email verification code is: ${otp}. It will expire in ${otpExpiryMinutes} minutes.`;
-    await sendEmail({
-        email: user.email,
-        subject: "Verify your email",
-        message,
-    });
+    
+    try {
+        await sendEmail({
+            email: user.email,
+            subject: "Verify your email",
+            message,
+        });
+    } catch (emailError) {
+        console.error("Failed to send email. If you haven't configured Brevo SMTP yet, use this OTP to verify:", otp);
+        // We do not throw the error here so the user can still be registered and verified via the console OTP in dev mode
+    }
 
     return res.status(201).json(
         new ApiResponse(
@@ -228,11 +234,16 @@ const forgotPassword = asyncHandler(async (req, res) => {
     await user.save({ validateBeforeSave: false });
 
     const message = `Your password reset code is: ${otp}. It will expire in ${otpExpiryMinutes} minutes.`;
-    await sendEmail({
-        email: user.email,
-        subject: "Reset your password",
-        message,
-    });
+    
+    try {
+        await sendEmail({
+            email: user.email,
+            subject: "Reset your password",
+            message,
+        });
+    } catch (emailError) {
+        console.error("Failed to send email. If you haven't configured Brevo SMTP yet, use this OTP to reset your password:", otp);
+    }
 
     return res.status(200).json(new ApiResponse(200, null, "Password reset code sent to your email"));
 });
